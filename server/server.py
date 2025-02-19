@@ -5,7 +5,8 @@ from datetime import datetime
 from typing import Annotated
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, Integer, String, DateTime, func, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from fastapi import FastAPI, Body
 from pydantic import BaseModel
 
@@ -13,32 +14,37 @@ from pydantic import BaseModel
 engine = create_async_engine("postgresql+asyncpg://postgres:1@localhost:5432/postgres", echo=True)
 
 
-class Message(BaseModel):
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(unique=True, nullable=False)
+    message_count: Mapped[str] = mapped_column(Integer, nullable=False, default=0)
+
+class Message(Base):
+    __tablename__ = "messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    message: Mapped[str] = mapped_column(String, nullable=False)
+    message_date: Mapped[DateTime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    user: Mapped[User] = relationship("User", back_populates="messages")
+
+class Messagetype(BaseModel):
     name: str
     message: str
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.connect() as con:
-        await con.execute(text("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(80) UNIQUE NOT NULL,
-                message_count INTEGER NOT NULL DEFAULT 0  
-            )
-        """))
-        await con.execute(text("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                message TEXT NOT NULL,
-                message_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                sequence_number INTEGER NOT NULL,
-                UNIQUE (user_id, sequence_number)
-            )
-        """))
-        await con.commit()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     yield
 
@@ -46,33 +52,16 @@ app = FastAPI(lifespan=lifespan)
 
 
 @app.post("/")
-async def ret(user_message: Message):
+async def ret(user_message: Messagetype):
     async with engine.begin() as conn:
         user_result =await conn.execute(
             text("""
-                WITH locked AS (    
-                    SELECT id, message_count 
-                    FROM users 
-                    WHERE name = :name 
-                    FOR UPDATE
-                ),
-                updated AS (
-                    UPDATE users
-                    SET message_count = locked.message_count + 1
-                    FROM locked
-                    WHERE users.id = locked.id
-                    RETURNING users.id, users.message_count
-                ),
-                inserted AS (
-                    INSERT INTO users (name, message_count)
-                    SELECT :name, 1
-                    WHERE NOT EXISTS (SELECT 1 FROM locked)
-                    RETURNING id, message_count
-                )
-                SELECT id, message_count FROM updated
-                UNION ALL
-                SELECT id, message_count FROM inserted;
-            """),
+            INSERT INTO users (name, message_count)
+            VALUES (:name, 1)
+            ON CONFLICT (name) DO UPDATE
+              SET message_count = users.message_count + 1
+            RETURNING id, message_count;
+        """),
             {"name": user_message.name}
         )
 
@@ -123,3 +112,8 @@ async def ret(user_message: Message):
             })
 
         return {"messages": response_messages}
+
+
+
+
+
