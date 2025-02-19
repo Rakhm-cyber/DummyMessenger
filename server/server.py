@@ -1,27 +1,41 @@
+import os
+from datetime import datetime
+from contextlib import asynccontextmanager
+from typing import Annotated, List
+
 import sqlalchemy
 import psycopg2
-
-from datetime import datetime
-from typing import Annotated
-from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import create_engine, text, Integer, String, DateTime, func, ForeignKey
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from fastapi import FastAPI, Body
 from pydantic import BaseModel
+from sqlalchemy import create_engine, text, Integer, String, DateTime, func, ForeignKey
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from dotenv import load_dotenv
 
+load_dotenv()
 
-engine = create_async_engine("postgresql+asyncpg://postgres:1@localhost:5432/postgres", echo=True)
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASS = os.getenv("DB_PASS", "1")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "postgres")
+
+DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+
 
 
 class Base(DeclarativeBase):
     pass
 
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(unique=True, nullable=False)
-    message_count: Mapped[str] = mapped_column(Integer, nullable=False, default=0)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    messages: Mapped[List["Message"]] = relationship("Message", back_populates="user")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -36,9 +50,11 @@ class Message(Base):
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     user: Mapped[User] = relationship("User", back_populates="messages")
 
+
 class Messagetype(BaseModel):
     name: str
     message: str
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,7 +70,7 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/")
 async def ret(user_message: Messagetype):
     async with engine.begin() as conn:
-        user_result =await conn.execute(
+        user_result = await conn.execute(
             text("""
             INSERT INTO users (name, message_count)
             VALUES (:name, 1)
@@ -83,7 +99,7 @@ async def ret(user_message: Messagetype):
         )
         message_info = message_result.fetchone()
         current_message_id = message_info.id
-        history_result =await conn.execute(
+        history_result = await conn.execute(
             text("""
                 SELECT m.id,
                        u.name,
@@ -112,8 +128,3 @@ async def ret(user_message: Messagetype):
             })
 
         return {"messages": response_messages}
-
-
-
-
-

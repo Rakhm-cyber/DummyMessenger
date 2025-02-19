@@ -3,13 +3,16 @@ import random
 import aiohttp
 import time
 
+
 URLS = ["http://127.0.0.1:8003/", "http://127.0.0.1:8004/"]
 names = ("Анастасия", "Дарья", "Глеб", "Виталий", "Иван", "Максим", "Вероника", "Андрей", "Наталья", "Владимир")
+
 
 async def send_message(url, payload: dict):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=payload) as response:
             return await response.json()
+
 
 async def send_request(url):
     name = random.choice(names)
@@ -18,6 +21,7 @@ async def send_request(url):
     response = await send_message(url, payload)
     return response
 
+
 async def create_workers(number_of_requests: int):
     result = []
     for _ in range(number_of_requests):
@@ -25,6 +29,7 @@ async def create_workers(number_of_requests: int):
         res = await send_request(url)
         result.append(res)
     return result
+
 
 async def main():
     total_requests = 5000
